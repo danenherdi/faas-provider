@@ -123,8 +123,6 @@ func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows typ
 	// Errors are common during disconnect of client, no need to log them.
 	reverseProxy.ErrorLog = log.New(io.Discard, "", 0)
 
-	fmt.Println("Creating new flow handler.")
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("the flow proxy handler is working properly.")
 		fmt.Printf("body is: %+v\n", r.Body)
@@ -143,12 +141,6 @@ func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows typ
 			fhttputil.Errorf(w, http.StatusBadRequest, "Can not find this kind of function in flows config")
 		}
 
-		// Initialize the input flow variable
-		flowInput := types.FlowInput{
-			Args:     nil,
-			Children: nil,
-		}
-
 		// Read current request body
 		var requestBody map[string]interface{}
 		err := json.NewDecoder(r.Body).Decode(&requestBody)
@@ -159,6 +151,11 @@ func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows typ
 		}
 
 		// TODO: Check required fields for args
+		// Initialize the input flow variable
+		flowInput := types.FlowInput{
+			Args:     requestBody,
+			Children: make(map[string]*types.FlowOutput),
+		}
 
 		// Save arguments of body
 		flowInput.Args = requestBody
@@ -171,11 +168,7 @@ func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows typ
 
 			// Grabbing the arguments of child
 			args := make(map[string]interface{})
-			argsMap, exist := flow.Args.Functions[alias]
-			if !exist {
-				fmt.Printf("error in mapping the args of function %s: there is no map\n", alias)
-			}
-			for argField, mapField := range argsMap {
+			for argField, mapField := range child.ArgsMap {
 				args[argField] = flowInput.Args[mapField]
 			}
 
@@ -204,6 +197,12 @@ func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows typ
 			// Read the response body
 			data := make(map[string]interface{})
 			childResponseBody, err := io.ReadAll(resp.Body)
+
+			if err != nil {
+				fmt.Printf("error in reading the response of function %s: %s\n", alias, err.Error())
+			}
+			fmt.Println(string(childResponseBody))
+
 			err = json.Unmarshal(childResponseBody, &data)
 			if err != nil {
 				fmt.Printf("error in unmarshalling the response of function %s: %s\n", alias, err.Error())
@@ -216,8 +215,11 @@ func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows typ
 			}
 		}
 
+		fmt.Printf("the flow input of the %s is: %+v\n", functionName, flowInput)
+
 		// Create a new request body
 		newRequestBody, _ := json.Marshal(flowInput)
+		fmt.Printf("new body request of %s is: %+v\n", functionName, newRequestBody)
 
 		// Replace the existing request body with the new one
 		r.Body = io.NopCloser(bytes.NewBuffer(newRequestBody))
