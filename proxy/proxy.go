@@ -23,6 +23,7 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,6 +37,7 @@ import (
 	fhttputil "github.com/danenherdi/faas-provider/httputil"
 	"github.com/danenherdi/faas-provider/types"
 	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -105,7 +107,7 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver, verbose b
 }
 
 // NewFlowHandler creates a new http.HandlerFunc for handling flow requests.
-func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows types.Flows, verbose bool) http.HandlerFunc {
+func NewFlowHandler(config types.FaaSConfig, redisClient *redis.Client, resolver BaseURLResolver, flows types.Flows, verbose bool) http.HandlerFunc {
 	if resolver == nil {
 		panic("NewFlowHandler: empty proxy handler resolver, cannot be nil")
 	}
@@ -172,6 +174,33 @@ func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows typ
 				args[argField] = flowInput.Args[mapField]
 			}
 
+			// Try caching if it is enabled for function
+			if config.EnableCaching && flows.Flows[child.Function].Caching {
+				reqBody, err := json.Marshal(args)
+				if err != nil {
+					fmt.Printf("error in marshalling args of function  %s for caching: %s\n", alias, err.Error())
+				}
+
+				// Generate SHA1 hash of the JSON string
+				hashBytes := sha1.Sum(reqBody)
+				hashString := fmt.Sprintf("%x", hashBytes)
+
+				// Try to get cached response from Redis
+				cachedResponseBytes, err := redisClient.Get(r.Context(), hashString).Bytes()
+				if err == nil {
+					// If cached response exists, parse the JSON string and return it
+					var data map[string]interface{}
+					err = json.Unmarshal(cachedResponseBytes, &data)
+					if err == nil {
+						flowInput.Children[alias] = &types.FlowOutput{
+							Data:     data,
+							Function: child.Function,
+						}
+						continue
+					}
+				}
+			}
+
 			// Proxy the child function
 			childRequestBody, err := json.Marshal(args)
 			if err != nil {
@@ -201,8 +230,22 @@ func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows typ
 			if err != nil {
 				fmt.Printf("error in reading the response of function %s: %s\n", alias, err.Error())
 			}
-			fmt.Println(string(childResponseBody))
 
+			if config.EnableCaching && flows.Flows[child.Function].Caching {
+				reqBody, err := json.Marshal(args)
+				if err != nil {
+					fmt.Printf("error in marshalling args of function  %s for caching: %s\n", alias, err.Error())
+				}
+
+				// Generate SHA1 hash of the JSON string
+				hashBytes := sha1.Sum(reqBody)
+				hashString := fmt.Sprintf("%x", hashBytes)
+
+				// Save the response
+				redisClient.SetEx(r.Context(), hashString, childResponseBody, 10*time.Minute)
+			}
+
+			fmt.Println(string(childResponseBody))
 			err = json.Unmarshal(childResponseBody, &data)
 			if err != nil {
 				fmt.Printf("error in unmarshalling the response of function %s: %s\n", alias, err.Error())

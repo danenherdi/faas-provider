@@ -80,6 +80,8 @@ type FaaSConfig struct {
 	MaxIdleConns int
 	// MaxIdleConnsPerHost with a default value of 1024, can be used for tuning HTTP proxy performance.
 	MaxIdleConnsPerHost int
+	// EnableCaching
+	EnableCaching bool
 }
 
 // GetReadTimeout is a helper to safely return the configured ReadTimeout or the default value of 10s
