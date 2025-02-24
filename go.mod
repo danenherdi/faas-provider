@@ -1,4 +1,4 @@
-module github.com/openfaas/faas-provider
+module github.com/danenherdi/faas-provider
 
 go 1.23
 

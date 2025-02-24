@@ -22,6 +22,9 @@
 package proxy
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -30,9 +33,9 @@ import (
 	"net/url"
 	"time"
 
+	fhttputil "github.com/danenherdi/faas-provider/httputil"
+	"github.com/danenherdi/faas-provider/types"
 	"github.com/gorilla/mux"
-	fhttputil "github.com/openfaas/faas-provider/httputil"
-	"github.com/openfaas/faas-provider/types"
 )
 
 const (
@@ -98,6 +101,129 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver, verbose b
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
+	}
+}
+
+// NewFlowHandler creates a new http.HandlerFunc for handling flow requests.
+func NewFlowHandler(config types.FaaSConfig, resolver BaseURLResolver, flows types.Flows, verbose bool) http.HandlerFunc {
+	if resolver == nil {
+		panic("NewFlowHandler: empty proxy handler resolver, cannot be nil")
+	}
+
+	proxyClient := NewProxyClientFromConfig(config)
+
+	reverseProxy := httputil.ReverseProxy{}
+	reverseProxy.Director = func(req *http.Request) {
+		// At least an empty director is required to prevent runtime errors.
+		req.URL.Scheme = "http"
+	}
+	reverseProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+	}
+
+	// Errors are common during disconnect of client, no need to log them.
+	reverseProxy.ErrorLog = log.New(io.Discard, "", 0)
+
+	fmt.Println("Creating new flow handler.")
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("the flow proxy handler is working properly.")
+		fmt.Printf("body is: %+v\n", r.Body)
+
+		// Fetch the name of the node (function)
+		pathVars := mux.Vars(r)
+		functionName := pathVars["name"]
+		if functionName == "" {
+			fhttputil.Errorf(w, http.StatusBadRequest, "Provide function name in the request path")
+			return
+		}
+
+		// Fetch the flow of the node (function)
+		flow, ok := flows.Flows[functionName]
+		if !ok {
+			fhttputil.Errorf(w, http.StatusBadRequest, "Can not find this kind of function in flows config")
+		}
+
+		// Initialize the input flow variable
+		flowInput := types.FlowInput{
+			Args:     nil,
+			Children: nil,
+		}
+
+		// Read current request body
+		var requestBody map[string]interface{}
+		err := json.NewDecoder(r.Body).Decode(&requestBody)
+		if err != nil {
+			log.Println("Error decoding JSON request body:", err)
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		// TODO: Check required fields for args
+
+		// Save arguments of body
+		flowInput.Args = requestBody
+		flowInput.Children = make(map[string]*types.FlowOutput)
+
+		// Iterate the children of the node (function)
+		for alias, child := range flow.Children {
+			// Recursively run the flow for these nodes
+			fmt.Printf("processing the %s: [%+v], a child of %s\n", alias, child, functionName)
+
+			// Grabbing the arguments of child
+			args := make(map[string]interface{})
+			argsMap, exist := flow.Args.Functions[alias]
+			if !exist {
+				fmt.Printf("error in mapping the args of function %s: there is no map\n", alias)
+			}
+			for argField, mapField := range argsMap {
+				args[argField] = flowInput.Args[mapField]
+			}
+
+			// Proxy the child function
+			childRequestBody, err := json.Marshal(args)
+			if err != nil {
+				fmt.Printf("error in marshalling args of function %s: %s\n", alias, err.Error())
+			}
+			req, err := http.NewRequest(
+				"POST",
+				fmt.Sprintf("http://127.0.0.1:8081/flow/%s", child.Function),
+				bytes.NewBuffer(childRequestBody),
+			)
+			if err != nil {
+				fmt.Printf("error in creating new request of function %s: %s\n", alias, err.Error())
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			// Do the request
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			if err != nil {
+				fmt.Printf("error in doing the request of function %s: %s\n", alias, err.Error())
+			}
+
+			// Read the response body
+			data := make(map[string]interface{})
+			childResponseBody, err := io.ReadAll(resp.Body)
+			err = json.Unmarshal(childResponseBody, &data)
+			if err != nil {
+				fmt.Printf("error in unmarshalling the response of function %s: %s\n", alias, err.Error())
+			}
+
+			// Save the responses
+			flowInput.Children[alias] = &types.FlowOutput{
+				Data:     data,
+				Function: child.Function,
+			}
+		}
+
+		// Create a new request body
+		newRequestBody, _ := json.Marshal(flowInput)
+
+		// Replace the existing request body with the new one
+		r.Body = io.NopCloser(bytes.NewBuffer(newRequestBody))
+
+		// Execute the target flow
+		proxyRequest(w, r, proxyClient, resolver, &reverseProxy, verbose)
 	}
 }
 
