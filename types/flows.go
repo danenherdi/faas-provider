@@ -6,9 +6,12 @@ type FlowChild struct {
 }
 
 type Flow struct {
-	Args     []string             `json:"args"`
-	Children map[string]FlowChild `json:"children,omitempty"`
-	Caching  bool                 `json:"caching"`
+	Args          []string             `json:"args"`
+	Children      map[string]FlowChild `json:"children,omitempty"`
+	Caching       bool                 `json:"caching"`
+	CacheTTL      uint                 `json:"cache_ttl"`
+	IsThirdParty  bool                 `json:"is_third_party"`
+	ThirdPartyURL *string              `json:"third_party_url"`
 }
 
 type Flows struct {
@@ -16,8 +19,8 @@ type Flows struct {
 }
 
 type FlowOutput struct {
-	Data     map[string]interface{} `json:"data"`
-	Function string                 `json:"function"`
+	Data     []byte `json:"data"`
+	Function string `json:"function"`
 }
 
 type FlowInput struct {
