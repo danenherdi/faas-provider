@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/openfaas/faas-provider/logs"
+	"github.com/danenherdi/faas-provider/logs"
 )
 
 // staticLogRequestor implements the logs Requestor returning a static stream of logs

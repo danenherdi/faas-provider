@@ -10,9 +10,9 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/danenherdi/faas-provider/auth"
+	"github.com/danenherdi/faas-provider/types"
 	"github.com/gorilla/mux"
-	"github.com/openfaas/faas-provider/auth"
-	"github.com/openfaas/faas-provider/types"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -84,6 +84,8 @@ func Serve(ctx context.Context, handlers *types.FaaSHandlers, config *types.FaaS
 
 	r.HandleFunc("/system/namespaces", hm.InstrumentHandler(handlers.ListNamespaces, "")).Methods(http.MethodGet)
 
+	r.HandleFunc("/system/flows", handlers.Flows)
+
 	// Only register the mutate namespace handler if it is defined
 	if handlers.MutateNamespace != nil {
 		r.HandleFunc("/system/namespace/{name:["+NameExpression+"]*}",
@@ -96,11 +98,17 @@ func Serve(ctx context.Context, handlers *types.FaaSHandlers, config *types.FaaS
 	}
 
 	proxyHandler := handlers.FunctionProxy
+	flowProxyHandler := handlers.FlowProxy
 
 	// Open endpoints
 	r.HandleFunc("/function/{name:["+NameExpression+"]+}", proxyHandler)
 	r.HandleFunc("/function/{name:["+NameExpression+"]+}/", proxyHandler)
 	r.HandleFunc("/function/{name:["+NameExpression+"]+}/{params:.*}", proxyHandler)
+
+	// Open Flow endpoints
+	r.HandleFunc("/flow/{name:["+NameExpression+"]+}", flowProxyHandler)
+	r.HandleFunc("/flow/{name:["+NameExpression+"]+}/", flowProxyHandler)
+	r.HandleFunc("/flow/{name:["+NameExpression+"]+}/{params:.*}", flowProxyHandler)
 
 	if handlers.Health != nil {
 		r.HandleFunc("/healthz", handlers.Health).Methods(http.MethodGet)
