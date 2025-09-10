@@ -16,24 +16,24 @@ type CacheClient interface {
 
 // RedisClientWrapper implements CacheClient for redis.Client.
 type RedisClientWrapper struct {
-	client *redis.Client
+	Client *redis.Client
 }
 
 func (r *RedisClientWrapper) Get(ctx context.Context, key string) ([]byte, error) {
-	return r.client.Get(ctx, key).Bytes()
+	return r.Client.Get(ctx, key).Bytes()
 }
 
 func (r *RedisClientWrapper) SetEx(ctx context.Context, key string, value []byte, ttl time.Duration) error {
-	return r.client.SetEx(ctx, key, value, ttl).Err()
+	return r.Client.SetEx(ctx, key, value, ttl).Err()
 }
 
 // PaperCacheClientWrapper implements CacheClient for paperClient.PaperClient.
 type PaperCacheClientWrapper struct {
-	client *paperClient.PaperClient
+	Client *paperClient.PaperClient
 }
 
 func (p *PaperCacheClientWrapper) Get(ctx context.Context, key string) ([]byte, error) {
-	val, err := p.client.Get(key)
+	val, err := p.Client.Get(key)
 	if err != nil {
 		return nil, err
 	}
@@ -41,5 +41,5 @@ func (p *PaperCacheClientWrapper) Get(ctx context.Context, key string) ([]byte, 
 }
 
 func (p *PaperCacheClientWrapper) SetEx(ctx context.Context, key string, value []byte, ttl time.Duration) error {
-	return p.client.Set(key, string(value), uint32(ttl.Seconds()))
+	return p.Client.Set(key, string(value), uint32(ttl.Seconds()))
 }
