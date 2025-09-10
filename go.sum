@@ -1,3 +1,5 @@
+github.com/PaperCache/paper-client-go v1.0.5 h1:4+UxdgeTPoHFl9R9c3+W7GaNMeTfuEnVtbwv0crX6ME=
+github.com/PaperCache/paper-client-go v1.0.5/go.mod h1:o/Sfz68d6w1xFwyev0siBZGT66V/nimSk82+KVuxIG8=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
