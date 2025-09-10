@@ -37,7 +37,6 @@ import (
 	fhttputil "github.com/danenherdi/faas-provider/httputil"
 	"github.com/danenherdi/faas-provider/types"
 	"github.com/gorilla/mux"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -107,7 +106,7 @@ func NewHandlerFunc(config types.FaaSConfig, resolver BaseURLResolver, verbose b
 }
 
 // NewFlowHandler creates a new http.HandlerFunc for handling flow requests.
-func NewFlowHandler(config types.FaaSConfig, redisClient *redis.Client, resolver BaseURLResolver, flows types.Flows, verbose bool) http.HandlerFunc {
+func NewFlowHandler(config types.FaaSConfig, cacheClient types.CacheClient, resolver BaseURLResolver, flows types.Flows, verbose bool) http.HandlerFunc {
 	// Check if the resolver is nil
 	if resolver == nil {
 		panic("NewFlowHandler: empty proxy handler resolver, cannot be nil")
@@ -175,14 +174,14 @@ func NewFlowHandler(config types.FaaSConfig, redisClient *redis.Client, resolver
 			hashBytes := sha1.Sum(reqBody)
 			hashString := fmt.Sprintf("%x", hashBytes)
 
-			// Try to get cached response from Redis
-			cachedResponseBytes, err := redisClient.Get(r.Context(), hashString).Bytes()
+			// Try to get cached response from the cache client
+			cachedResponseBytes, err := cacheClient.Get(r.Context(), hashString)
 			if err == nil {
 				// If cached response exists, parse the JSON string and return it
 				w.WriteHeader(http.StatusOK)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.Copy(w, bytes.NewBuffer(cachedResponseBytes))
-				fmt.Printf("get the response of %s from redis: %s\n", functionName, string(cachedResponseBytes))
+				fmt.Printf("get the response of %s from cache: %s\n", functionName, string(cachedResponseBytes))
 				return
 			}
 		}
@@ -278,8 +277,12 @@ func NewFlowHandler(config types.FaaSConfig, redisClient *redis.Client, resolver
 
 			// Save the response
 			responseBytes, _ := io.ReadAll(cacheResponse)
-			redisClient.SetEx(r.Context(), hashString, responseBytes, time.Duration(flow.CacheTTL)*time.Second)
-			fmt.Printf("caching the response of %s in redis: %s\n", functionName, string(responseBytes))
+			//redisClient.SetEx(r.Context(), hashString, responseBytes, time.Duration(flow.CacheTTL)*time.Second)
+			err = cacheClient.SetEx(r.Context(), hashString, responseBytes, time.Duration(flow.CacheTTL)*time.Second)
+			if err != nil {
+				return
+			}
+			fmt.Printf("caching the response of %s in cache: %s\n", functionName, string(responseBytes))
 		}
 	}
 }
