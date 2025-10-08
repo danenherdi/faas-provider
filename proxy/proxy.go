@@ -45,6 +45,19 @@ const (
 	openFaaSInternalHeader = "X-OpenFaaS-Internal"
 )
 
+// Shared HTTP client across all requests to enable connection reuse
+var sharedHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        100,              // Total pool size
+		MaxIdleConnsPerHost: 100,              // Pool size per host
+		MaxConnsPerHost:     100,              // Max concurrent per host
+		IdleConnTimeout:     90 * time.Second, // Keep connections alive for 90s
+		DisableKeepAlives:   false,            // Enable keep-alives for connection reuse
+		DisableCompression:  false,            // Enable compression for better performance
+	},
+	Timeout: 30 * time.Second, // Set a timeout for requests
+}
+
 // BaseURLResolver URL resolver for proxy requests
 //
 // The FaaS provider implementation is responsible for providing the resolver function implementation.
@@ -221,8 +234,9 @@ func NewFlowHandler(config types.FaaSConfig, cacheClient types.CacheClient, reso
 			req.Header.Set("Content-Type", "application/json")
 
 			// Do the request
-			client := &http.Client{}
-			resp, err := client.Do(req)
+			//client := &http.Client{}
+			//resp, err := client.Do(req)
+			resp, err := sharedHTTPClient.Do(req)
 			if err != nil {
 				fmt.Printf("error in doing the request of function %s: %s\n", alias, err.Error())
 			}
@@ -233,7 +247,6 @@ func NewFlowHandler(config types.FaaSConfig, cacheClient types.CacheClient, reso
 
 			// Read the response body
 			data, err := io.ReadAll(resp.Body)
-
 			if err != nil {
 				fmt.Printf("error in reading the response of function %s: %s\n", alias, err.Error())
 			}
