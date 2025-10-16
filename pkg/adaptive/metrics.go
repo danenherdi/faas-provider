@@ -111,7 +111,6 @@ func (ma *MetricsAggregator) FastProfile() error {
 		}
 
 		// Wait for minimal reconstruction time
-		// PaperCache paper indicates reconstruction is fast (<2s for typical cache)
 		time.Sleep(2 * time.Second)
 
 		// Collect metrics for this policy
