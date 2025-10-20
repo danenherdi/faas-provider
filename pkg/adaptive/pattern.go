@@ -43,7 +43,7 @@ type PatternDetector struct {
 
 // NewPatternDetector creates a new pattern detector
 func NewPatternDetector(windowSize int) *PatternDetector {
-	if windowSize < 100 {
+	if windowSize <= 0 { // set default only if input is not valid
 		windowSize = 1000 // Default: 1000 accesses
 	}
 

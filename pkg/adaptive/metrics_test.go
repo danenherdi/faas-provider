@@ -243,7 +243,7 @@ func TestMetricsAggregator_SelectBestPolicy(t *testing.T) {
 	// Select best policy
 	bestPolicy := aggregator.SelectBestPolicy()
 	if bestPolicy == "" {
-		t.Error("Expected non-empty best policy")
+		t.Fatal("SelectBestPolicy returned an empty string, cannot proceed.")
 	}
 
 	t.Logf("Best policy: %s", bestPolicy)

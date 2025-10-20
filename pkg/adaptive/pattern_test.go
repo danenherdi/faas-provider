@@ -37,15 +37,12 @@ func TestPatternDetector_TemporalLocality(t *testing.T) {
 	detector := NewPatternDetector(100)
 
 	// Simulate temporal locality: key1 repeatedly accessed
-	for i := 0; i < 50; i++ {
-		detector.RecordAccess("key1", true) // Repeated access = high temporal locality
-		time.Sleep(1 * time.Millisecond)
-	}
-
-	// Add some other keys
-	for i := 0; i < 50; i++ {
-		detector.RecordAccess("key2", false)
-		time.Sleep(1 * time.Millisecond)
+	for i := 0; i < 100; i++ {
+		if i%2 == 0 {
+			detector.RecordAccess("key1", true)
+		} else {
+			detector.RecordAccess("key2", false)
+		}
 	}
 
 	pattern := detector.GetCurrentPattern()

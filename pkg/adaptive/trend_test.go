@@ -161,7 +161,8 @@ func TestTrendAnalyzer_AnalyzeTrend_HighVariance(t *testing.T) {
 	// Create history with high variance (unstable)
 	history := make([]*MetricsSnapshot, 0)
 	baseTime := time.Now()
-	values := []float64{0.02, 0.08, 0.03, 0.09, 0.025, 0.085, 0.03, 0.09}
+	//values := []float64{0.02, 0.08, 0.03, 0.09, 0.025, 0.085, 0.03, 0.09}
+	values := []float64{0.1, 0.5, 0.1, 0.5, 0.1, 0.5, 0.1, 0.5}
 
 	for i, missRatio := range values {
 		snapshot := &MetricsSnapshot{

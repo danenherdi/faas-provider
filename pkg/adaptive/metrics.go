@@ -391,7 +391,7 @@ func (ma *MetricsAggregator) SelectBestPolicy() string {
 	bestMissRatio := 1.0
 
 	for policyName, metrics := range ma.policyMetrics {
-		if metrics.MissRatio < bestMissRatio {
+		if metrics.MissRatio <= bestMissRatio {
 			bestMissRatio = metrics.MissRatio
 			bestPolicy = policyName
 		}
@@ -428,7 +428,7 @@ func (ma *MetricsAggregator) PrintSummary() {
 		bestPolicy := ""
 		bestMissRatio := 1.0
 		for name, metrics := range ma.policyMetrics {
-			if metrics.MissRatio < bestMissRatio {
+			if metrics.MissRatio <= bestMissRatio {
 				bestMissRatio = metrics.MissRatio
 				bestPolicy = name
 			}

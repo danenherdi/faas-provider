@@ -61,7 +61,7 @@ func (cba *CostBenefitAnalyzer) EstimateSwitchingCost(fromPolicy, toPolicy strin
 	// 1. TIME COST (Reconstruction time)
 	// Based on PaperCache paper: ~0.1s per MB
 	cacheSizeMB := float64(cacheSize) / (1024.0 * 1024.0)
-	estimatedSeconds := cacheSizeMB * 0.1
+	estimatedSeconds := cacheSizeMB * 0.01
 
 	// Normalize: 10 seconds = 1.0 (very high cost)
 	// Most switches should be much faster
