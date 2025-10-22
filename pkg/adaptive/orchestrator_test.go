@@ -13,7 +13,7 @@ import (
 
 func TestIntelligentOrchestrator_NewOrchestrator(t *testing.T) {
 	// Skip if no real PaperCache available
-	t.Skip("Requires real PaperCache instance - run integration tests separately")
+	//t.Skip("Requires real PaperCache instance - run integration tests separately")
 
 	client, _ := paperClient.ClientConnect("paper://localhost:3145")
 	config := DefaultOrchestratorConfig()
@@ -186,7 +186,7 @@ func TestIntelligentOrchestrator_PrintStatus(t *testing.T) {
 // TestIntelligentOrchestrator_Initialize_Integration tests full initialization
 // Requires PaperCache running on localhost:8191
 func TestIntelligentOrchestrator_Initialize_Integration(t *testing.T) {
-	t.Skip("Integration test - requires PaperCache on localhost:3145")
+	//t.Skip("Integration test - requires PaperCache on localhost:3145")
 
 	client, _ := paperClient.ClientConnect("paper://localhost:3145")
 	config := DefaultOrchestratorConfig()
@@ -220,7 +220,7 @@ func TestIntelligentOrchestrator_Initialize_Integration(t *testing.T) {
 
 // TestIntelligentOrchestrator_FullCycle_Integration tests complete orchestration cycle
 func TestIntelligentOrchestrator_FullCycle_Integration(t *testing.T) {
-	t.Skip("Integration test - requires PaperCache and takes ~1 minute")
+	//t.Skip("Integration test - requires PaperCache and takes ~1 minute")
 
 	client, _ := paperClient.ClientConnect("paper://localhost:3145")
 	config := DefaultOrchestratorConfig()

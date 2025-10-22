@@ -84,7 +84,7 @@ func (o *IntelligentOrchestrator) Initialize() error {
 
 	// Step 2: Perform simplified fast profiling (6 seconds - LFU vs LRU)
 	log.Println("[Orchestrator] Starting simplified fast profiling (6 seconds)...")
-	if err := o.metricsAggregator.SimplifiedFastProfile(); err != nil {
+	if err := o.metricsAggregator.FastProfile(); err != nil {
 		return fmt.Errorf("fast profiling failed: %w", err)
 	}
 
