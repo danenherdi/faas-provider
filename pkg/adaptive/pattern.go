@@ -54,51 +54,54 @@ func NewPatternDetector(windowSize int) *PatternDetector {
 }
 
 // RecordAccess adds a cache access to the log
-func (pd *PatternDetector) RecordAccess(key string, isHit bool) {
-	pd.mu.Lock()
-	defer pd.mu.Unlock()
+func (patternDetector *PatternDetector) RecordAccess(key string, isHit bool) {
+	patternDetector.mu.Lock()
+	defer patternDetector.mu.Unlock()
 
+	// Record the access event
 	access := &CacheAccess{
 		Key:       key,
 		Timestamp: time.Now(),
 		IsHit:     isHit,
 	}
 
-	pd.accessLog = append(pd.accessLog, access)
+	// Append to access log and maintain size
+	patternDetector.accessLog = append(patternDetector.accessLog, access)
 
 	// Maintain sliding window
-	if len(pd.accessLog) > pd.windowSize {
-		pd.accessLog = pd.accessLog[1:]
+	if len(patternDetector.accessLog) > patternDetector.windowSize {
+		patternDetector.accessLog = patternDetector.accessLog[1:]
 	}
 }
 
 // DetectShift compares recent vs current patterns to detect significant changes
-func (pd *PatternDetector) DetectShift() *PatternShift {
-	pd.mu.RLock()
-	defer pd.mu.RUnlock()
+func (patternDetector *PatternDetector) DetectShift() *PatternShift {
+	patternDetector.mu.RLock()
+	defer patternDetector.mu.RUnlock()
 
 	// Need at least full window for reliable detection
-	if len(pd.accessLog) < pd.windowSize {
+	if len(patternDetector.accessLog) < patternDetector.windowSize {
 		return &PatternShift{
 			Detected: false,
 		}
 	}
 
 	// Split into two halves: recent (first 50%) vs current (last 50%)
-	midpoint := len(pd.accessLog) / 2
+	midpoint := len(patternDetector.accessLog) / 2
 
-	recentAccesses := pd.accessLog[:midpoint]
-	currentAccesses := pd.accessLog[midpoint:]
+	recentAccesses := patternDetector.accessLog[:midpoint]
+	currentAccesses := patternDetector.accessLog[midpoint:]
 
 	// Extract patterns for each half
-	recentPattern := pd.extractPattern(recentAccesses)
-	currentPattern := pd.extractPattern(currentAccesses)
+	recentPattern := patternDetector.extractPattern(recentAccesses)
+	currentPattern := patternDetector.extractPattern(currentAccesses)
 
 	// Calculate shifts
 	temporalShift := math.Abs(recentPattern.RecencyScore - currentPattern.RecencyScore)
 	frequencyShift := math.Abs(recentPattern.FrequencyScore - currentPattern.FrequencyScore)
 
 	// Detect significant shift (threshold: 10% change)
+	// This threshold can be tuned based on sensitivity requirements
 	const shiftThreshold = 0.10
 	detected := (temporalShift > shiftThreshold) || (frequencyShift > shiftThreshold)
 
@@ -121,13 +124,13 @@ func (pd *PatternDetector) DetectShift() *PatternShift {
 }
 
 // extractPattern analyzes a sequence of accesses to extract workload characteristics
-func (pd *PatternDetector) extractPattern(accesses []*CacheAccess) *WorkloadPattern {
+func (patternDetector *PatternDetector) extractPattern(accesses []*CacheAccess) *WorkloadPattern {
 	if len(accesses) == 0 {
 		return &WorkloadPattern{}
 	}
 
 	// Calculate recency score (temporal locality)
-	recencyScore := pd.calculateRecencyScore(accesses)
+	recencyScore := patternDetector.calculateRecencyScore(accesses)
 
 	// Calculate frequency score (frequency-based locality)
 	frequencyMap := make(map[string]int)
@@ -140,7 +143,7 @@ func (pd *PatternDetector) extractPattern(accesses []*CacheAccess) *WorkloadPatt
 		}
 	}
 
-	frequencyScore := pd.calculateFrequencyScore(frequencyMap, len(accesses))
+	frequencyScore := patternDetector.calculateFrequencyScore(frequencyMap, len(accesses))
 
 	// Calculate unique key ratio (scan pattern detection)
 	uniqueKeys := len(frequencyMap)
@@ -161,7 +164,7 @@ func (pd *PatternDetector) extractPattern(accesses []*CacheAccess) *WorkloadPatt
 
 // calculateRecencyScore measures temporal locality strength
 // High score = strong temporal locality (recent items likely to be accessed again)
-func (pd *PatternDetector) calculateRecencyScore(accesses []*CacheAccess) float64 {
+func (patternDetector *PatternDetector) calculateRecencyScore(accesses []*CacheAccess) float64 {
 	if len(accesses) < 4 {
 		return 0.0
 	}
@@ -190,7 +193,7 @@ func (pd *PatternDetector) calculateRecencyScore(accesses []*CacheAccess) float6
 
 // calculateFrequencyScore measures access frequency skew
 // High score = high skew (some keys accessed much more frequently than others)
-func (pd *PatternDetector) calculateFrequencyScore(frequencyMap map[string]int, totalAccesses int) float64 {
+func (patternDetector *PatternDetector) calculateFrequencyScore(frequencyMap map[string]int, totalAccesses int) float64 {
 	if len(frequencyMap) < 2 {
 		return 0.0
 	}
@@ -211,55 +214,55 @@ func (pd *PatternDetector) calculateFrequencyScore(frequencyMap map[string]int, 
 	cv := stddev / mean
 
 	// Normalize to 0-1 range (CV can be > 1, so cap it)
-	// CV around 0.5-1.0 indicates moderate skew
-	// CV > 2.0 indicates high skew
+	// CV around 0.5-1.0 indicates moderate skew (frequency locality or LFU-friendly)
+	// CV > 2.0 indicates high skew (LFU-friendly because few keys dominate accesses)
 	frequencyScore := math.Min(cv/2.0, 1.0)
 
 	return frequencyScore
 }
 
 // GetCurrentPattern returns the current workload pattern
-func (pd *PatternDetector) GetCurrentPattern() *WorkloadPattern {
-	pd.mu.RLock()
-	defer pd.mu.RUnlock()
+func (patternDetector *PatternDetector) GetCurrentPattern() *WorkloadPattern {
+	patternDetector.mu.RLock()
+	defer patternDetector.mu.RUnlock()
 
-	if len(pd.accessLog) == 0 {
+	if len(patternDetector.accessLog) == 0 {
 		return &WorkloadPattern{}
 	}
 
-	return pd.extractPattern(pd.accessLog)
+	return patternDetector.extractPattern(patternDetector.accessLog)
 }
 
 // GetAccessLogSize returns the current size of the access log
-func (pd *PatternDetector) GetAccessLogSize() int {
-	pd.mu.RLock()
-	defer pd.mu.RUnlock()
+func (patternDetector *PatternDetector) GetAccessLogSize() int {
+	patternDetector.mu.RLock()
+	defer patternDetector.mu.RUnlock()
 
-	return len(pd.accessLog)
+	return len(patternDetector.accessLog)
 }
 
 // Clear resets the access log (useful for testing)
-func (pd *PatternDetector) Clear() {
-	pd.mu.Lock()
-	defer pd.mu.Unlock()
+func (patternDetector *PatternDetector) Clear() {
+	patternDetector.mu.Lock()
+	defer patternDetector.mu.Unlock()
 
-	pd.accessLog = make([]*CacheAccess, 0, pd.windowSize)
+	patternDetector.accessLog = make([]*CacheAccess, 0, patternDetector.windowSize)
 }
 
 // PrintSummary logs current pattern statistics
-func (pd *PatternDetector) PrintSummary() {
-	pd.mu.RLock()
-	defer pd.mu.RUnlock()
+func (patternDetector *PatternDetector) PrintSummary() {
+	patternDetector.mu.RLock()
+	defer patternDetector.mu.RUnlock()
 
-	if len(pd.accessLog) == 0 {
+	if len(patternDetector.accessLog) == 0 {
 		log.Println("[PatternDetector] No access data")
 		return
 	}
 
-	pattern := pd.extractPattern(pd.accessLog)
+	pattern := patternDetector.extractPattern(patternDetector.accessLog)
 
 	log.Println("PatternDetector Summary")
-	log.Printf("Access log size: %d / %d", len(pd.accessLog), pd.windowSize)
+	log.Printf("Access log size: %d / %d", len(patternDetector.accessLog), patternDetector.windowSize)
 	log.Printf("Total accesses: %d", pattern.TotalAccesses)
 	log.Printf("Unique keys: %d", pattern.UniqueKeys)
 	log.Printf("Hit rate: %.3f", pattern.HitRate)

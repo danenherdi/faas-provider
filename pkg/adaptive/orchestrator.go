@@ -68,96 +68,100 @@ func NewIntelligentOrchestrator(client *paperClient.PaperClient, config *Orchest
 }
 
 // Initialize performs initial setup and policy selection
-func (o *IntelligentOrchestrator) Initialize() error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+func (orchestrator *IntelligentOrchestrator) Initialize() error {
+	orchestrator.mu.Lock()
+	defer orchestrator.mu.Unlock()
 
 	log.Println("[Orchestrator] Initializing...")
 
-	// Step 1: Discover available policies
-	if err := o.metricsAggregator.Initialize(); err != nil {
+	// Discover available policies
+	if err := orchestrator.metricsAggregator.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize metrics aggregator: %w", err)
 	}
 
-	policies := o.metricsAggregator.GetConfiguredPolicies()
+	policies := orchestrator.metricsAggregator.GetConfiguredPolicies()
 	log.Printf("[Orchestrator] Discovered %d policies: %v", len(policies), policies)
 
-	// Step 2: Perform simplified fast profiling (6 seconds - LFU vs LRU)
-	log.Println("[Orchestrator] Starting simplified fast profiling (6 seconds)...")
-	if err := o.metricsAggregator.FastProfile(); err != nil {
+	// Perform simplified fast profiling
+	log.Println("[Orchestrator] Starting simplified fast profiling...")
+	if err := orchestrator.metricsAggregator.FastProfile(); err != nil {
 		return fmt.Errorf("fast profiling failed: %w", err)
 	}
 
-	// Step 3: Select best initial policy
-	bestPolicy := o.metricsAggregator.SelectBestPolicy()
+	// Select best initial policy
+	bestPolicy := orchestrator.metricsAggregator.SelectBestPolicy()
 	if bestPolicy == "" {
 		return fmt.Errorf("no suitable initial policy found")
 	}
 
-	// Step 4: Switch to best policy
+	// Switch to best policy
 	log.Printf("[Orchestrator] Switching to initial best policy: %s", bestPolicy)
-	if err := o.papercacheClient.Policy(bestPolicy); err != nil {
+	if err := orchestrator.papercacheClient.Policy(bestPolicy); err != nil {
 		return fmt.Errorf("failed to set initial policy: %w", err)
 	}
 
-	o.currentPolicy = bestPolicy
-	o.lastSwitchTime = time.Now()
+	orchestrator.currentPolicy = bestPolicy
+	orchestrator.lastSwitchTime = time.Now()
 
 	// Configure cost-benefit analyzer threshold
-	o.costBenefitAnalyzer.SetThreshold(o.config.SwitchThreshold)
+	orchestrator.costBenefitAnalyzer.SetThreshold(orchestrator.config.SwitchThreshold)
 
 	log.Println("[Orchestrator] Initialization complete")
-	o.metricsAggregator.PrintSummary()
+	orchestrator.metricsAggregator.PrintSummary()
 
 	return nil
 }
 
 // Start begins the orchestration loop
-func (o *IntelligentOrchestrator) Start() error {
-	o.mu.Lock()
-	if o.isRunning {
-		o.mu.Unlock()
+func (orchestrator *IntelligentOrchestrator) Start() error {
+	// Ensure only one instance is running
+	orchestrator.mu.Lock()
+	if orchestrator.isRunning {
+		orchestrator.mu.Unlock()
 		return fmt.Errorf("orchestrator already running")
 	}
-	o.isRunning = true
-	o.mu.Unlock()
+	orchestrator.isRunning = true
+	orchestrator.mu.Unlock()
 
-	log.Printf("[Orchestrator] Starting evaluation loop (interval: %v)", o.config.EvaluationInterval)
+	log.Printf("[Orchestrator] Starting evaluation loop (interval: %v)", orchestrator.config.EvaluationInterval)
 
-	ticker := time.NewTicker(o.config.EvaluationInterval)
+	// Set up ticker for periodic evaluation
+	ticker := time.NewTicker(orchestrator.config.EvaluationInterval)
 	defer ticker.Stop()
 
+	// Main loop for evaluations and stopping signal
 	for {
 		select {
 		case <-ticker.C:
-			o.evaluationLoop()
+			orchestrator.evaluationLoop()
 
-		case <-o.stopChan:
+		case <-orchestrator.stopChan:
 			log.Println("[Orchestrator] Stopping...")
-			o.mu.Lock()
-			o.isRunning = false
-			o.mu.Unlock()
+			orchestrator.mu.Lock()
+			orchestrator.isRunning = false
+			orchestrator.mu.Unlock()
 			return nil
 		}
 	}
 }
 
 // Stop gracefully stops the orchestration loop
-func (o *IntelligentOrchestrator) Stop() {
-	close(o.stopChan)
+func (orchestrator *IntelligentOrchestrator) Stop() {
+	close(orchestrator.stopChan)
 }
 
 // evaluationLoop runs the main orchestration logic
-func (o *IntelligentOrchestrator) evaluationLoop() {
-	o.mu.Lock()
-	currentPolicy := o.currentPolicy
-	lastSwitch := o.lastSwitchTime
-	stabilityPeriod := o.config.StabilityPeriod
-	o.mu.Unlock()
+func (orchestrator *IntelligentOrchestrator) evaluationLoop() {
+	// Read current state, protected by mutex, then release lock for processing
+	orchestrator.mu.Lock()
+	currentPolicy := orchestrator.currentPolicy
+	lastSwitch := orchestrator.lastSwitchTime
+	stabilityPeriod := orchestrator.config.StabilityPeriod
+	orchestrator.mu.Unlock()
 
-	log.Println("[Orchestrator] === Evaluation Cycle ===")
+	log.Println("[Orchestrator] Evaluation Cycle Started")
 
-	// Step 1: Check stability period
+	// Check stability period
 	timeSinceSwitch := time.Since(lastSwitch)
 	if timeSinceSwitch < stabilityPeriod {
 		log.Printf("[Orchestrator] In stability period (%.0fs / %.0fs) - skipping evaluation",
@@ -165,14 +169,14 @@ func (o *IntelligentOrchestrator) evaluationLoop() {
 		return
 	}
 
-	// Step 2: Collect current metrics
-	aggregated, err := o.metricsAggregator.CollectCurrentMetrics()
+	// Collect current metrics and Log the current state
+	aggregated, err := orchestrator.metricsAggregator.CollectCurrentMetrics()
 	if err != nil {
 		log.Printf("[Orchestrator] Failed to collect metrics: %v", err)
 		return
 	}
 
-	currentSnapshot := o.metricsAggregator.GetLatestSnapshot()
+	currentSnapshot := orchestrator.metricsAggregator.GetLatestSnapshot()
 	if currentSnapshot == nil {
 		log.Println("[Orchestrator] No snapshot available")
 		return
@@ -181,14 +185,14 @@ func (o *IntelligentOrchestrator) evaluationLoop() {
 	log.Printf("[Orchestrator] Current policy: %s, miss ratio: %.4f",
 		currentPolicy, currentSnapshot.MissRatio)
 
-	// Step 3: Detect pattern shift
-	patternShift := o.patternDetector.DetectShift()
+	// Detect pattern shift
+	patternShift := orchestrator.patternDetector.DetectShift()
 
-	// Step 4: Analyze performance trend
-	history := o.metricsAggregator.GetHistory()
-	trend := o.trendAnalyzer.AnalyzeTrend(history, currentPolicy)
+	// Analyze performance trend
+	history := orchestrator.metricsAggregator.GetHistory()
+	trend := orchestrator.trendAnalyzer.AnalyzeTrend(history, currentPolicy)
 
-	// Step 5: Decide if evaluation needed
+	// Decide if evaluation needed
 	needsEvaluation := patternShift.Detected || trend.IndicatesDegradation
 
 	if !needsEvaluation {
@@ -206,16 +210,16 @@ func (o *IntelligentOrchestrator) evaluationLoop() {
 			trend.Slope, trend.Variance)
 	}
 
-	// Step 6: Evaluate candidate policies
-	o.evaluateCandidates(currentPolicy, aggregated)
+	// Evaluate candidate policies
+	orchestrator.evaluateCandidates(currentPolicy, aggregated)
 }
 
 // evaluateCandidates performs cost-benefit analysis on alternative policies
-func (o *IntelligentOrchestrator) evaluateCandidates(currentPolicy string, aggregated *AggregatedMetrics) {
+func (orchestrator *IntelligentOrchestrator) evaluateCandidates(currentPolicy string, aggregated *AggregatedMetrics) {
 	log.Println("[Orchestrator] Evaluating candidate policies...")
 
 	// Get current policy miss ratio
-	currentSnapshot := o.metricsAggregator.GetLatestSnapshot()
+	currentSnapshot := orchestrator.metricsAggregator.GetLatestSnapshot()
 	if currentSnapshot == nil {
 		log.Println("[Orchestrator] No current snapshot available")
 		return
@@ -233,7 +237,7 @@ func (o *IntelligentOrchestrator) evaluateCandidates(currentPolicy string, aggre
 	}
 
 	// Perform cost-benefit analysis
-	bestAnalysis := o.costBenefitAnalyzer.CompareMultipleCandidates(
+	bestAnalysis := orchestrator.costBenefitAnalyzer.CompareMultipleCandidates(
 		currentPolicy,
 		currentSnapshot.MissRatio,
 		candidates,
@@ -250,82 +254,82 @@ func (o *IntelligentOrchestrator) evaluateCandidates(currentPolicy string, aggre
 		log.Printf("[Orchestrator] Best candidate (%s) has insufficient net benefit (%.2f%% < %.2f%%)",
 			bestAnalysis.CandidatePolicy,
 			bestAnalysis.NetBenefit*100,
-			o.config.SwitchThreshold*100)
+			orchestrator.config.SwitchThreshold*100)
 		return
 	}
 
 	// Perform the switch
-	o.performSwitch(bestAnalysis)
+	orchestrator.performSwitch(bestAnalysis)
 }
 
 // performSwitch executes a policy switch
-func (o *IntelligentOrchestrator) performSwitch(analysis *CostBenefitAnalysis) {
+func (orchestrator *IntelligentOrchestrator) performSwitch(analysis *CostBenefitAnalysis) {
 	log.Printf("[Orchestrator] Switching policy: %s → %s",
 		analysis.CurrentPolicy, analysis.CandidatePolicy)
 	log.Printf("[Orchestrator] Expected improvement: %.2f%% net benefit",
 		analysis.NetBenefit*100)
 
 	// Execute switch
-	if err := o.papercacheClient.Policy(analysis.CandidatePolicy); err != nil {
+	if err := orchestrator.papercacheClient.Policy(analysis.CandidatePolicy); err != nil {
 		log.Printf("[Orchestrator] Switch failed: %v", err)
 		return
 	}
 
 	// Update state
-	o.mu.Lock()
-	o.currentPolicy = analysis.CandidatePolicy
-	o.lastSwitchTime = time.Now()
-	o.mu.Unlock()
+	orchestrator.mu.Lock()
+	orchestrator.currentPolicy = analysis.CandidatePolicy
+	orchestrator.lastSwitchTime = time.Now()
+	orchestrator.mu.Unlock()
 
 	// Clear pattern detector (new baseline)
-	o.patternDetector.Clear()
+	orchestrator.patternDetector.Clear()
 
 	log.Printf("[Orchestrator] Switch completed successfully")
 }
 
 // RecordAccess records a cache access for pattern detection
-func (o *IntelligentOrchestrator) RecordAccess(key string, isHit bool) {
-	o.patternDetector.RecordAccess(key, isHit)
+func (orchestrator *IntelligentOrchestrator) RecordAccess(key string, isHit bool) {
+	orchestrator.patternDetector.RecordAccess(key, isHit)
 }
 
 // GetCurrentPolicy returns the current active policy
-func (o *IntelligentOrchestrator) GetCurrentPolicy() string {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return o.currentPolicy
+func (orchestrator *IntelligentOrchestrator) GetCurrentPolicy() string {
+	orchestrator.mu.RLock()
+	defer orchestrator.mu.RUnlock()
+	return orchestrator.currentPolicy
 }
 
 // GetStatus returns orchestrator status information
-func (o *IntelligentOrchestrator) GetStatus() map[string]interface{} {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
+func (orchestrator *IntelligentOrchestrator) GetStatus() map[string]interface{} {
+	orchestrator.mu.RLock()
+	defer orchestrator.mu.RUnlock()
 
-	timeSinceSwitch := time.Since(o.lastSwitchTime)
+	timeSinceSwitch := time.Since(orchestrator.lastSwitchTime)
 
 	return map[string]interface{}{
-		"is_running":          o.isRunning,
-		"current_policy":      o.currentPolicy,
-		"last_switch":         o.lastSwitchTime.Format(time.RFC3339),
+		"is_running":          orchestrator.isRunning,
+		"current_policy":      orchestrator.currentPolicy,
+		"last_switch":         orchestrator.lastSwitchTime.Format(time.RFC3339),
 		"time_since_switch":   timeSinceSwitch.String(),
-		"evaluation_interval": o.config.EvaluationInterval.String(),
-		"stability_period":    o.config.StabilityPeriod.String(),
-		"switch_threshold":    fmt.Sprintf("%.1f%%", o.config.SwitchThreshold*100),
+		"evaluation_interval": orchestrator.config.EvaluationInterval.String(),
+		"stability_period":    orchestrator.config.StabilityPeriod.String(),
+		"switch_threshold":    fmt.Sprintf("%.1f%%", orchestrator.config.SwitchThreshold*100),
 	}
 }
 
 // PrintStatus logs current orchestrator status
-func (o *IntelligentOrchestrator) PrintStatus() {
-	status := o.GetStatus()
+func (orchestrator *IntelligentOrchestrator) PrintStatus() {
+	status := orchestrator.GetStatus()
 
-	log.Println("=== Orchestrator Status ===")
+	log.Println("Orchestrator Status:")
 	for key, value := range status {
 		log.Printf("  %s: %v", key, value)
 	}
 
 	// Print component summaries
-	log.Println("\n=== Component Status ===")
-	o.metricsAggregator.PrintSummary()
-	o.patternDetector.PrintSummary()
-	o.costBenefitAnalyzer.PrintSummary()
+	log.Println("\nComponent Status:")
+	orchestrator.metricsAggregator.PrintSummary()
+	orchestrator.patternDetector.PrintSummary()
+	orchestrator.costBenefitAnalyzer.PrintSummary()
 	log.Println("===========================")
 }

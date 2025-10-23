@@ -54,11 +54,11 @@ func NewCostBenefitAnalyzer(maxMemory uint64) *CostBenefitAnalyzer {
 }
 
 // EstimateSwitchingCost estimates the cost of switching from one policy to another
-func (cba *CostBenefitAnalyzer) EstimateSwitchingCost(fromPolicy, toPolicy string, cacheSize uint64) *SwitchingCost {
-	cba.mu.RLock()
-	defer cba.mu.RUnlock()
+func (costBenefit *CostBenefitAnalyzer) EstimateSwitchingCost(fromPolicy, toPolicy string, cacheSize uint64) *SwitchingCost {
+	costBenefit.mu.RLock()
+	defer costBenefit.mu.RUnlock()
 
-	// 1. TIME COST (Reconstruction time)
+	// TIME COST (Reconstruction time)
 	// Based on PaperCache paper: ~0.1s per MB
 	cacheSizeMB := float64(cacheSize) / (1024.0 * 1024.0)
 	estimatedSeconds := cacheSizeMB * 0.01
@@ -67,19 +67,19 @@ func (cba *CostBenefitAnalyzer) EstimateSwitchingCost(fromPolicy, toPolicy strin
 	// Most switches should be much faster
 	timeCost := math.Min(estimatedSeconds/10.0, 1.0)
 
-	// 2. MEMORY COST (Temporary overhead during reconstruction)
+	// MEMORY COST (Temporary overhead during reconstruction)
 	// MiniStack and dual metadata use ~10% of cache size
 	overheadBytes := float64(cacheSize) * 0.1
-	memoryCost := math.Min(overheadBytes/float64(cba.maxMemory), 1.0)
+	memoryCost := math.Min(overheadBytes/float64(costBenefit.maxMemory), 1.0)
 
-	// 3. DEGRADATION COST (Performance hit during switch)
+	// DEGRADATION COST (Performance hit during switch)
 	// From PaperCache paper: ~2% miss ratio increase during reconstruction
 	degradationCost := 0.02
 
 	// Calculate weighted total cost
-	totalCost := (cba.weightTime * timeCost) +
-		(cba.weightMemory * memoryCost) +
-		(cba.weightDegradation * degradationCost)
+	totalCost := (costBenefit.weightTime * timeCost) +
+		(costBenefit.weightMemory * memoryCost) +
+		(costBenefit.weightDegradation * degradationCost)
 
 	return &SwitchingCost{
 		TimeCost:        timeCost,
@@ -90,7 +90,7 @@ func (cba *CostBenefitAnalyzer) EstimateSwitchingCost(fromPolicy, toPolicy strin
 }
 
 // CalculatePotentialGain calculates the relative improvement from switching
-func (cba *CostBenefitAnalyzer) CalculatePotentialGain(currentMissRatio, candidateMissRatio float64) float64 {
+func (costBenefit *CostBenefitAnalyzer) CalculatePotentialGain(currentMissRatio, candidateMissRatio float64) float64 {
 	if currentMissRatio == 0 {
 		return 0 // No improvement possible if already perfect
 	}
@@ -106,12 +106,12 @@ func (cba *CostBenefitAnalyzer) CalculatePotentialGain(currentMissRatio, candida
 }
 
 // CalculateNetBenefit calculates net benefit (gain - cost)
-func (cba *CostBenefitAnalyzer) CalculateNetBenefit(potentialGain float64, switchingCost *SwitchingCost) float64 {
+func (costBenefit *CostBenefitAnalyzer) CalculateNetBenefit(potentialGain float64, switchingCost *SwitchingCost) float64 {
 	return potentialGain - switchingCost.TotalCost
 }
 
 // Analyze performs complete cost-benefit analysis
-func (cba *CostBenefitAnalyzer) Analyze(
+func (costBenefit *CostBenefitAnalyzer) Analyze(
 	currentPolicy string,
 	candidatePolicy string,
 	currentMissRatio float64,
@@ -120,18 +120,18 @@ func (cba *CostBenefitAnalyzer) Analyze(
 ) *CostBenefitAnalysis {
 
 	// Calculate potential gain
-	potentialGain := cba.CalculatePotentialGain(currentMissRatio, candidateMissRatio)
+	potentialGain := costBenefit.CalculatePotentialGain(currentMissRatio, candidateMissRatio)
 
 	// Estimate switching cost
-	switchingCost := cba.EstimateSwitchingCost(currentPolicy, candidatePolicy, cacheSize)
+	switchingCost := costBenefit.EstimateSwitchingCost(currentPolicy, candidatePolicy, cacheSize)
 
 	// Calculate net benefit
-	netBenefit := cba.CalculateNetBenefit(potentialGain, switchingCost)
+	netBenefit := costBenefit.CalculateNetBenefit(potentialGain, switchingCost)
 
 	// Determine if should switch
-	cba.mu.RLock()
-	shouldSwitch := netBenefit > cba.switchThreshold
-	cba.mu.RUnlock()
+	costBenefit.mu.RLock()
+	shouldSwitch := netBenefit > costBenefit.switchThreshold
+	costBenefit.mu.RUnlock()
 
 	analysis := &CostBenefitAnalysis{
 		CurrentPolicy:      currentPolicy,
@@ -145,13 +145,13 @@ func (cba *CostBenefitAnalyzer) Analyze(
 	}
 
 	// Log analysis
-	cba.logAnalysis(analysis)
+	costBenefit.logAnalysis(analysis)
 
 	return analysis
 }
 
 // logAnalysis logs the cost-benefit analysis details
-func (cba *CostBenefitAnalyzer) logAnalysis(analysis *CostBenefitAnalysis) {
+func (costBenefit *CostBenefitAnalyzer) logAnalysis(analysis *CostBenefitAnalysis) {
 	log.Printf("[CostBenefitAnalyzer] Evaluating switch: %s → %s",
 		analysis.CurrentPolicy, analysis.CandidatePolicy)
 	log.Printf("Current miss ratio: %.4f", analysis.CurrentMissRatio)
@@ -167,88 +167,88 @@ func (cba *CostBenefitAnalyzer) logAnalysis(analysis *CostBenefitAnalysis) {
 
 	if analysis.ShouldSwitch {
 		log.Printf("RECOMMENDATION: SWITCH (net benefit > %.2f%%)",
-			cba.switchThreshold*100)
+			costBenefit.switchThreshold*100)
 	} else {
 		log.Printf("RECOMMENDATION: STAY (net benefit < %.2f%%)",
-			cba.switchThreshold*100)
+			costBenefit.switchThreshold*100)
 	}
 }
 
 // SetThreshold updates the minimum net benefit threshold for switching
-func (cba *CostBenefitAnalyzer) SetThreshold(threshold float64) {
-	cba.mu.Lock()
-	defer cba.mu.Unlock()
+func (costBenefit *CostBenefitAnalyzer) SetThreshold(threshold float64) {
+	costBenefit.mu.Lock()
+	defer costBenefit.mu.Unlock()
 
 	if threshold >= 0 && threshold <= 1.0 {
-		cba.switchThreshold = threshold
+		costBenefit.switchThreshold = threshold
 	}
 }
 
 // GetThreshold returns the current switching threshold
-func (cba *CostBenefitAnalyzer) GetThreshold() float64 {
-	cba.mu.RLock()
-	defer cba.mu.RUnlock()
+func (costBenefit *CostBenefitAnalyzer) GetThreshold() float64 {
+	costBenefit.mu.RLock()
+	defer costBenefit.mu.RUnlock()
 
-	return cba.switchThreshold
+	return costBenefit.switchThreshold
 }
 
 // SetWeights updates the cost component weights
-func (cba *CostBenefitAnalyzer) SetWeights(time, memory, degradation float64) error {
+func (costBenefit *CostBenefitAnalyzer) SetWeights(time, memory, degradation float64) error {
 	// Validate that weights sum to approximately 1.0
 	sum := time + memory + degradation
 	if math.Abs(sum-1.0) > 0.01 {
 		return fmt.Errorf("weights must sum to 1.0, got %.3f", sum)
 	}
 
-	cba.mu.Lock()
-	defer cba.mu.Unlock()
+	costBenefit.mu.Lock()
+	defer costBenefit.mu.Unlock()
 
-	cba.weightTime = time
-	cba.weightMemory = memory
-	cba.weightDegradation = degradation
+	costBenefit.weightTime = time
+	costBenefit.weightMemory = memory
+	costBenefit.weightDegradation = degradation
 
 	return nil
 }
 
 // GetWeights returns the current cost weights
-func (cba *CostBenefitAnalyzer) GetWeights() (time, memory, degradation float64) {
-	cba.mu.RLock()
-	defer cba.mu.RUnlock()
+func (costBenefit *CostBenefitAnalyzer) GetWeights() (time, memory, degradation float64) {
+	costBenefit.mu.RLock()
+	defer costBenefit.mu.RUnlock()
 
-	return cba.weightTime, cba.weightMemory, cba.weightDegradation
+	return costBenefit.weightTime, costBenefit.weightMemory, costBenefit.weightDegradation
 }
 
 // EstimateReconstructionTime estimates the time needed to reconstruct policy
-func (cba *CostBenefitAnalyzer) EstimateReconstructionTime(cacheSize uint64) float64 {
+func (costBenefit *CostBenefitAnalyzer) EstimateReconstructionTime(cacheSize uint64) float64 {
 	// Based on PaperCache paper: ~0.1s per MB
 	cacheSizeMB := float64(cacheSize) / (1024.0 * 1024.0)
 	return cacheSizeMB * 0.1
 }
 
 // EstimateMemoryOverhead estimates temporary memory overhead during switch
-func (cba *CostBenefitAnalyzer) EstimateMemoryOverhead(cacheSize uint64) uint64 {
+func (costBenefit *CostBenefitAnalyzer) EstimateMemoryOverhead(cacheSize uint64) uint64 {
 	// MiniStack + dual metadata: ~10% of cache size
 	return uint64(float64(cacheSize) * 0.1)
 }
 
 // PrintSummary logs a summary of cost-benefit parameters
-func (cba *CostBenefitAnalyzer) PrintSummary() {
-	cba.mu.RLock()
-	defer cba.mu.RUnlock()
+func (costBenefit *CostBenefitAnalyzer) PrintSummary() {
+	costBenefit.mu.RLock()
+	defer costBenefit.mu.RUnlock()
 
 	log.Println("CostBenefitAnalyzer Configuration")
 	log.Printf("Max memory: %d bytes (%.2f MB)",
-		cba.maxMemory, float64(cba.maxMemory)/(1024.0*1024.0))
-	log.Printf("Switch threshold: %.2f%% net benefit", cba.switchThreshold*100)
+		costBenefit.maxMemory, float64(costBenefit.maxMemory)/(1024.0*1024.0))
+	log.Printf("Switch threshold: %.2f%% net benefit", costBenefit.switchThreshold*100)
 	log.Println("Cost weights:")
-	log.Printf("Time: %.2f", cba.weightTime)
-	log.Printf("Memory: %.2f", cba.weightMemory)
-	log.Printf("Degradation: %.2f", cba.weightDegradation)
+	log.Printf("Time: %.2f", costBenefit.weightTime)
+	log.Printf("Memory: %.2f", costBenefit.weightMemory)
+	log.Printf("Degradation: %.2f", costBenefit.weightDegradation)
 	log.Println("=========================================")
 }
 
 // CompareMultipleCandidates evaluates multiple candidate policies and returns the best
-func (cba *CostBenefitAnalyzer) CompareMultipleCandidates(
+func (costBenefit *CostBenefitAnalyzer) CompareMultipleCandidates(
 	currentPolicy string,
 	currentMissRatio float64,
 	candidates map[string]float64, // policy -> miss ratio
@@ -263,7 +263,7 @@ func (cba *CostBenefitAnalyzer) CompareMultipleCandidates(
 			continue // Skip current policy
 		}
 
-		analysis := cba.Analyze(
+		analysis := costBenefit.Analyze(
 			currentPolicy,
 			candidatePolicy,
 			currentMissRatio,

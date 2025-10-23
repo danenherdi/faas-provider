@@ -66,16 +66,19 @@ func NewMetricsAggregator(client *paperClient.PaperClient) *MetricsAggregator {
 
 // Initialize discovers configured policies from PaperCache
 // Must be called before any other operations
-func (ma *MetricsAggregator) Initialize() error {
-	status, err := ma.papercacheClient.Status()
+func (metricsAggr *MetricsAggregator) Initialize() error {
+
+	// Get initial status to discover policies
+	status, err := metricsAggr.papercacheClient.Status()
 	if err != nil {
 		return fmt.Errorf("failed to get initial status: %w", err)
 	}
 
-	ma.mu.Lock()
-	ma.configuredPolicies = make([]string, len(status.GetPolicies()))
-	copy(ma.configuredPolicies, status.GetPolicies())
-	ma.mu.Unlock()
+	// Store configured policies
+	metricsAggr.mu.Lock()
+	metricsAggr.configuredPolicies = make([]string, len(status.GetPolicies()))
+	copy(metricsAggr.configuredPolicies, status.GetPolicies())
+	metricsAggr.mu.Unlock()
 
 	log.Printf("[MetricsAggregator] Initialized with %d policies: %v",
 		len(status.GetPolicies()), status.GetPolicies())
@@ -85,12 +88,13 @@ func (ma *MetricsAggregator) Initialize() error {
 
 // FastProfile performs rapid profiling of all configured policies
 // Switches through each policy, waits for minimal reconstruction, and collects metrics
-// Duration: ~10 seconds for 4 policies (2.5s per policy)
-func (ma *MetricsAggregator) FastProfile() error {
-	ma.mu.RLock()
-	policies := make([]string, len(ma.configuredPolicies))
-	copy(policies, ma.configuredPolicies)
-	ma.mu.RUnlock()
+// Example Duration: ~10 seconds for 4 policies (2.5s per policy)
+func (metricsAggr *MetricsAggregator) FastProfile() error {
+	// Get list of configured policies
+	metricsAggr.mu.RLock()
+	policies := make([]string, len(metricsAggr.configuredPolicies))
+	copy(policies, metricsAggr.configuredPolicies)
+	metricsAggr.mu.RUnlock()
 
 	if len(policies) == 0 {
 		return fmt.Errorf("no policies configured, call Initialize() first")
@@ -99,30 +103,32 @@ func (ma *MetricsAggregator) FastProfile() error {
 	log.Printf("[MetricsAggregator] Starting fast profiling of %d policies...", len(policies))
 	startTime := time.Now()
 
+	// Iterate through each policy and collect metrics
 	for i, policyName := range policies {
 		log.Printf("[MetricsAggregator] [%d/%d] Profiling policy: %s",
 			i+1, len(policies), policyName)
 
-		// Switch to policy
-		if err := ma.papercacheClient.Policy(policyName); err != nil {
+		// Switch to policy for profiling
+		if err := metricsAggr.papercacheClient.Policy(policyName); err != nil {
 			log.Printf("[MetricsAggregator] WARNING: Failed to switch to %s: %v",
 				policyName, err)
 			continue
 		}
 
 		// Wait for minimal reconstruction time
+		// is a reasonable compromise for quick profiling while allowing some cache warm-up
 		time.Sleep(2 * time.Second)
 
 		// Collect metrics for this policy
-		status, err := ma.papercacheClient.Status()
+		status, err := metricsAggr.papercacheClient.Status()
 		if err != nil {
 			log.Printf("[MetricsAggregator] WARNING: Failed to get status for %s: %v",
 				policyName, err)
 			continue
 		}
 
-		// Store metrics
-		ma.storePolicyMetrics(policyName, status)
+		// Store metrics for this policy
+		metricsAggr.storePolicyMetrics(policyName, status)
 
 		log.Printf("[MetricsAggregator] %s metrics collected: miss_ratio=%.4f, hit_ratio=%.4f",
 			policyName, status.GetMissRatio(), 1.0-status.GetMissRatio())
@@ -137,31 +143,33 @@ func (ma *MetricsAggregator) FastProfile() error {
 // SimplifiedFastProfile profiles only LFU and LRU policies
 // This is faster than full profiling and covers the most common use cases
 // Duration: ~6 seconds (2.5s per policy + overhead)
-func (ma *MetricsAggregator) SimplifiedFastProfile() error {
+func (metricsAggr *MetricsAggregator) SimplifiedFastProfile() error {
 	corePolicies := []string{"lfu", "lru"}
 
 	log.Printf("[MetricsAggregator] Starting simplified fast profiling (LFU vs LRU)...")
 	startTime := time.Now()
 
+	// Iterate through core policies and collect metrics
 	for i, policyName := range corePolicies {
 		log.Printf("[MetricsAggregator] [%d/2] Profiling policy: %s", i+1, policyName)
 
-		// Switch to policy
-		if err := ma.papercacheClient.Policy(policyName); err != nil {
+		// Switch to policy for profiling
+		if err := metricsAggr.papercacheClient.Policy(policyName); err != nil {
 			return fmt.Errorf("failed to switch to %s: %w", policyName, err)
 		}
 
 		// Wait for reconstruction
+		// is a reasonable compromise for quick profiling while allowing some cache warm-up
 		time.Sleep(2500 * time.Millisecond)
 
 		// Collect metrics
-		status, err := ma.papercacheClient.Status()
+		status, err := metricsAggr.papercacheClient.Status()
 		if err != nil {
 			return fmt.Errorf("failed to get status for %s: %w", policyName, err)
 		}
 
 		// Store metrics
-		ma.storePolicyMetrics(policyName, status)
+		metricsAggr.storePolicyMetrics(policyName, status)
 
 		log.Printf("[MetricsAggregator] %s metrics: miss_ratio=%.4f",
 			policyName, status.GetMissRatio())
@@ -174,19 +182,19 @@ func (ma *MetricsAggregator) SimplifiedFastProfile() error {
 }
 
 // storePolicyMetrics stores or updates metrics for a specific policy (internal helper)
-func (ma *MetricsAggregator) storePolicyMetrics(policyName string, status *paperClient.PaperStatus) {
-	ma.mu.Lock()
-	defer ma.mu.Unlock()
+func (metricsAggr *MetricsAggregator) storePolicyMetrics(policyName string, status *paperClient.PaperStatus) {
+	// Must be called with lock held for writing
+	metricsAggr.mu.Lock()
+	defer metricsAggr.mu.Unlock()
 
-	if existing, exists := ma.policyMetrics[policyName]; exists {
-		// Update existing metrics
+	// Update or create metrics entry for the policy
+	if existing, exists := metricsAggr.policyMetrics[policyName]; exists {
 		existing.MissRatio = status.GetMissRatio()
 		existing.HitRatio = 1.0 - status.GetMissRatio()
 		existing.LastUpdated = time.Now()
 		existing.SampleCount++
 	} else {
-		// Create new metrics entry
-		ma.policyMetrics[policyName] = &PolicyMetrics{
+		metricsAggr.policyMetrics[policyName] = &PolicyMetrics{
 			Name:        policyName,
 			MissRatio:   status.GetMissRatio(),
 			HitRatio:    1.0 - status.GetMissRatio(),
@@ -198,23 +206,24 @@ func (ma *MetricsAggregator) storePolicyMetrics(policyName string, status *paper
 
 // CollectCurrentMetrics collects metrics for the currently active policy
 // This should be called periodically during normal operation
-func (ma *MetricsAggregator) CollectCurrentMetrics() (*AggregatedMetrics, error) {
-	status, err := ma.papercacheClient.Status()
+func (metricsAggr *MetricsAggregator) CollectCurrentMetrics() (*AggregatedMetrics, error) {
+	// Get current status from PaperCache
+	status, err := metricsAggr.papercacheClient.Status()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get status: %w", err)
 	}
 
-	ma.mu.Lock()
-	defer ma.mu.Unlock()
+	metricsAggr.mu.Lock()
+	defer metricsAggr.mu.Unlock()
 
-	// Update current policy metrics
-	if existing, exists := ma.policyMetrics[status.GetPolicy()]; exists {
+	// Update current policy metrics or create new entry if not exists
+	if existing, exists := metricsAggr.policyMetrics[status.GetPolicy()]; exists {
 		existing.MissRatio = status.GetMissRatio()
 		existing.HitRatio = 1.0 - status.GetMissRatio()
 		existing.LastUpdated = time.Now()
 		existing.SampleCount++
 	} else {
-		ma.policyMetrics[status.GetPolicy()] = &PolicyMetrics{
+		metricsAggr.policyMetrics[status.GetPolicy()] = &PolicyMetrics{
 			Name:        status.GetPolicy(),
 			MissRatio:   status.GetMissRatio(),
 			HitRatio:    1.0 - status.GetMissRatio(),
@@ -234,27 +243,27 @@ func (ma *MetricsAggregator) CollectCurrentMetrics() (*AggregatedMetrics, error)
 		TotalSets:     status.GetTotalSets(),
 	}
 
-	ma.history = append(ma.history, snapshot)
+	metricsAggr.history = append(metricsAggr.history, snapshot)
 
 	// Trim history if exceeds max size
-	if len(ma.history) > ma.maxHistorySize {
-		ma.history = ma.history[1:]
+	if len(metricsAggr.history) > metricsAggr.maxHistorySize {
+		metricsAggr.history = metricsAggr.history[1:]
 	}
 
-	return ma.buildAggregatedMetrics(), nil
+	return metricsAggr.buildAggregatedMetrics(), nil
 }
 
 // buildAggregatedMetrics creates an aggregated view of all metrics
-// Must be called with lock held
-func (ma *MetricsAggregator) buildAggregatedMetrics() *AggregatedMetrics {
+// Must be called with lock held for reading or writing
+func (metricsAggr *MetricsAggregator) buildAggregatedMetrics() *AggregatedMetrics {
 	aggregated := &AggregatedMetrics{
-		AllPoliciesMetrics: make(map[string]*PolicyMetrics, len(ma.policyMetrics)),
-		History:            make([]*MetricsSnapshot, len(ma.history)),
-		IsComplete:         len(ma.policyMetrics) == len(ma.configuredPolicies),
+		AllPoliciesMetrics: make(map[string]*PolicyMetrics, len(metricsAggr.policyMetrics)),
+		History:            make([]*MetricsSnapshot, len(metricsAggr.history)),
+		IsComplete:         len(metricsAggr.policyMetrics) == len(metricsAggr.configuredPolicies),
 	}
 
-	// Deep copy policy metrics
-	for k, v := range ma.policyMetrics {
+	// Deep copy policy metrics to avoid external modification
+	for k, v := range metricsAggr.policyMetrics {
 		aggregated.AllPoliciesMetrics[k] = &PolicyMetrics{
 			Name:        v.Name,
 			MissRatio:   v.MissRatio,
@@ -264,12 +273,12 @@ func (ma *MetricsAggregator) buildAggregatedMetrics() *AggregatedMetrics {
 		}
 	}
 
-	// Copy history
-	copy(aggregated.History, ma.history)
+	// Copy history snapshots
+	copy(aggregated.History, metricsAggr.history)
 
 	// Set current policy info from latest snapshot
-	if len(ma.history) > 0 {
-		latest := ma.history[len(ma.history)-1]
+	if len(metricsAggr.history) > 0 {
+		latest := metricsAggr.history[len(metricsAggr.history)-1]
 		aggregated.CurrentPolicy = latest.CurrentPolicy
 		aggregated.CurrentPolicyMissRatio = latest.MissRatio
 		aggregated.CacheSize = latest.CacheSize
@@ -279,25 +288,28 @@ func (ma *MetricsAggregator) buildAggregatedMetrics() *AggregatedMetrics {
 }
 
 // GetAggregatedMetrics returns the current aggregated metrics view
-func (ma *MetricsAggregator) GetAggregatedMetrics() *AggregatedMetrics {
-	ma.mu.RLock()
-	defer ma.mu.RUnlock()
+func (metricsAggr *MetricsAggregator) GetAggregatedMetrics() *AggregatedMetrics {
+	metricsAggr.mu.RLock()
+	defer metricsAggr.mu.RUnlock()
 
-	return ma.buildAggregatedMetrics()
+	return metricsAggr.buildAggregatedMetrics()
 }
 
 // StartMonitoring begins continuous metrics collection in background
 // Collects metrics at the specified interval until stopChan is closed
-func (ma *MetricsAggregator) StartMonitoring(interval time.Duration, stopChan <-chan struct{}) {
+func (metricsAggr *MetricsAggregator) StartMonitoring(interval time.Duration, stopChan <-chan struct{}) {
 	log.Printf("[MetricsAggregator] Started monitoring mode (interval: %v)", interval)
 
+	// Ticker for periodic collection
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Monitoring loop
 	for {
+		// Wait for next tick or stop signal
 		select {
 		case <-ticker.C:
-			metrics, err := ma.CollectCurrentMetrics()
+			metrics, err := metricsAggr.CollectCurrentMetrics()
 			if err != nil {
 				log.Printf("[MetricsAggregator] Collection error: %v", err)
 				continue
@@ -317,11 +329,11 @@ func (ma *MetricsAggregator) StartMonitoring(interval time.Duration, stopChan <-
 
 // GetPolicyMetrics returns metrics for a specific policy
 // Returns nil if the policy hasn't been measured yet
-func (ma *MetricsAggregator) GetPolicyMetrics(policyName string) *PolicyMetrics {
-	ma.mu.RLock()
-	defer ma.mu.RUnlock()
+func (metricsAggr *MetricsAggregator) GetPolicyMetrics(policyName string) *PolicyMetrics {
+	metricsAggr.mu.RLock()
+	defer metricsAggr.mu.RUnlock()
 
-	if metrics, exists := ma.policyMetrics[policyName]; exists {
+	if metrics, exists := metricsAggr.policyMetrics[policyName]; exists {
 		// Return a copy to prevent external modification
 		return &PolicyMetrics{
 			Name:        metrics.Name,
@@ -336,61 +348,61 @@ func (ma *MetricsAggregator) GetPolicyMetrics(policyName string) *PolicyMetrics 
 }
 
 // GetHistory returns a copy of the metrics history
-func (ma *MetricsAggregator) GetHistory() []*MetricsSnapshot {
-	ma.mu.RLock()
-	defer ma.mu.RUnlock()
+func (metricsAggr *MetricsAggregator) GetHistory() []*MetricsSnapshot {
+	metricsAggr.mu.RLock()
+	defer metricsAggr.mu.RUnlock()
 
-	history := make([]*MetricsSnapshot, len(ma.history))
-	copy(history, ma.history)
+	history := make([]*MetricsSnapshot, len(metricsAggr.history))
+	copy(history, metricsAggr.history)
 
 	return history
 }
 
 // GetLatestSnapshot returns the most recent metrics snapshot
-func (ma *MetricsAggregator) GetLatestSnapshot() *MetricsSnapshot {
-	ma.mu.RLock()
-	defer ma.mu.RUnlock()
+func (metricsAggr *MetricsAggregator) GetLatestSnapshot() *MetricsSnapshot {
+	metricsAggr.mu.RLock()
+	defer metricsAggr.mu.RUnlock()
 
-	if len(ma.history) == 0 {
+	if len(metricsAggr.history) == 0 {
 		return nil
 	}
 
-	return ma.history[len(ma.history)-1]
+	return metricsAggr.history[len(metricsAggr.history)-1]
 }
 
 // IsDataComplete checks if we have metrics for all configured policies
-func (ma *MetricsAggregator) IsDataComplete() bool {
-	ma.mu.RLock()
-	defer ma.mu.RUnlock()
+func (metricsAggr *MetricsAggregator) IsDataComplete() bool {
+	metricsAggr.mu.RLock()
+	defer metricsAggr.mu.RUnlock()
 
-	return len(ma.policyMetrics) == len(ma.configuredPolicies)
+	return len(metricsAggr.policyMetrics) == len(metricsAggr.configuredPolicies)
 }
 
 // GetConfiguredPolicies returns the list of configured policies
-func (ma *MetricsAggregator) GetConfiguredPolicies() []string {
-	ma.mu.RLock()
-	defer ma.mu.RUnlock()
+func (metricsAggr *MetricsAggregator) GetConfiguredPolicies() []string {
+	metricsAggr.mu.RLock()
+	defer metricsAggr.mu.RUnlock()
 
-	policies := make([]string, len(ma.configuredPolicies))
-	copy(policies, ma.configuredPolicies)
+	policies := make([]string, len(metricsAggr.configuredPolicies))
+	copy(policies, metricsAggr.configuredPolicies)
 
 	return policies
 }
 
 // SelectBestPolicy returns the policy with the lowest miss ratio
 // Returns empty string if no metrics available
-func (ma *MetricsAggregator) SelectBestPolicy() string {
-	ma.mu.RLock()
-	defer ma.mu.RUnlock()
+func (metricsAggr *MetricsAggregator) SelectBestPolicy() string {
+	metricsAggr.mu.RLock()
+	defer metricsAggr.mu.RUnlock()
 
-	if len(ma.policyMetrics) == 0 {
+	if len(metricsAggr.policyMetrics) == 0 {
 		return ""
 	}
 
 	var bestPolicy string
 	bestMissRatio := 1.0
 
-	for policyName, metrics := range ma.policyMetrics {
+	for policyName, metrics := range metricsAggr.policyMetrics {
 		if metrics.MissRatio <= bestMissRatio {
 			bestMissRatio = metrics.MissRatio
 			bestPolicy = policyName
@@ -401,18 +413,18 @@ func (ma *MetricsAggregator) SelectBestPolicy() string {
 }
 
 // PrintSummary logs a summary of collected metrics
-func (ma *MetricsAggregator) PrintSummary() {
-	ma.mu.RLock()
-	defer ma.mu.RUnlock()
+func (metricsAggr *MetricsAggregator) PrintSummary() {
+	metricsAggr.mu.RLock()
+	defer metricsAggr.mu.RUnlock()
 
 	log.Println("MetricsAggregator Summary")
-	log.Printf("Configured policies: %v", ma.configuredPolicies)
-	log.Printf("Collected metrics for %d policies", len(ma.policyMetrics))
-	log.Printf("History snapshots: %d", len(ma.history))
+	log.Printf("Configured policies: %v", metricsAggr.configuredPolicies)
+	log.Printf("Collected metrics for %d policies", len(metricsAggr.policyMetrics))
+	log.Printf("History snapshots: %d", len(metricsAggr.history))
 
 	log.Println("\nPolicy Metrics:")
-	for _, policyName := range ma.configuredPolicies {
-		if metrics, exists := ma.policyMetrics[policyName]; exists {
+	for _, policyName := range metricsAggr.configuredPolicies {
+		if metrics, exists := metricsAggr.policyMetrics[policyName]; exists {
 			log.Printf("  %s: miss_ratio=%.4f, hit_ratio=%.4f, samples=%d, last_updated=%s",
 				metrics.Name,
 				metrics.MissRatio,
@@ -424,10 +436,10 @@ func (ma *MetricsAggregator) PrintSummary() {
 		}
 	}
 
-	if len(ma.policyMetrics) > 0 {
+	if len(metricsAggr.policyMetrics) > 0 {
 		bestPolicy := ""
 		bestMissRatio := 1.0
-		for name, metrics := range ma.policyMetrics {
+		for name, metrics := range metricsAggr.policyMetrics {
 			if metrics.MissRatio <= bestMissRatio {
 				bestMissRatio = metrics.MissRatio
 				bestPolicy = name

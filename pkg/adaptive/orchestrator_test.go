@@ -10,7 +10,6 @@ import (
 // MockPaperClient implements the necessary methods for testing
 // Note: Can't fully mock paperClient.PaperClient since it's a struct, not an interface
 // So test it with a real client or create integration tests separately
-
 func TestIntelligentOrchestrator_NewOrchestrator(t *testing.T) {
 	// Skip if no real PaperCache available
 	//t.Skip("Requires real PaperCache instance - run integration tests separately")
@@ -182,9 +181,7 @@ func TestIntelligentOrchestrator_PrintStatus(t *testing.T) {
 // INTEGRATION TESTS (Require real PaperCache instance)
 // Run with: go test -tags=integration
 // ============================================================================
-
 // TestIntelligentOrchestrator_Initialize_Integration tests full initialization
-// Requires PaperCache running on localhost:8191
 func TestIntelligentOrchestrator_Initialize_Integration(t *testing.T) {
 	//t.Skip("Integration test - requires PaperCache on localhost:3145")
 

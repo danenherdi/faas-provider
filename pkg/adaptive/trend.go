@@ -13,15 +13,15 @@ type TrendScore struct {
 	Slope                float64 // Miss ratio change rate (per snapshot)
 	Variance             float64 // Miss ratio variance (stability measure)
 	Intercept            float64 // Starting miss ratio
-	Confidence           float64 // R² value (0-1, goodness of fit)
+	Confidence           float64 // R^2 value (0-1, goodness of fit)
 	SampleSize           int     // Number of snapshots analyzed
 }
 
 // TrendAnalyzer predicts performance trends using linear regression
 type TrendAnalyzer struct {
 	// Configuration
-	degradationThreshold float64 // Slope threshold for degradation (default: 0.01)
-	varianceThreshold    float64 // Variance threshold for instability (default: 0.05)
+	degradationThreshold float64 // Slope threshold for degradation (default: 0.01 = 1% per snapshot)
+	varianceThreshold    float64 // Variance threshold for instability (default: 0.05 = 5% variance)
 	minSamples           int     // Minimum samples for analysis (default: 3)
 
 	mu sync.RWMutex
@@ -37,12 +37,12 @@ func NewTrendAnalyzer() *TrendAnalyzer {
 }
 
 // AnalyzeTrend analyzes miss ratio trend for a specific policy
-func (ta *TrendAnalyzer) AnalyzeTrend(history []*MetricsSnapshot, policyName string) *TrendScore {
-	ta.mu.RLock()
-	defer ta.mu.RUnlock()
+func (trendAnalyzer *TrendAnalyzer) AnalyzeTrend(history []*MetricsSnapshot, policyName string) *TrendScore {
+	trendAnalyzer.mu.RLock()
+	defer trendAnalyzer.mu.RUnlock()
 
 	// Check minimum sample requirement
-	if len(history) < ta.minSamples {
+	if len(history) < trendAnalyzer.minSamples {
 		return &TrendScore{
 			IndicatesDegradation: false,
 			Confidence:           0.0,
@@ -51,9 +51,9 @@ func (ta *TrendAnalyzer) AnalyzeTrend(history []*MetricsSnapshot, policyName str
 	}
 
 	// Extract miss ratios for the specified policy
-	missRatios := ta.extractMissRatios(history, policyName)
+	missRatios := trendAnalyzer.extractMissRatios(history, policyName)
 
-	if len(missRatios) < ta.minSamples {
+	if len(missRatios) < trendAnalyzer.minSamples {
 		return &TrendScore{
 			IndicatesDegradation: false,
 			Confidence:           0.0,
@@ -62,14 +62,14 @@ func (ta *TrendAnalyzer) AnalyzeTrend(history []*MetricsSnapshot, policyName str
 	}
 
 	// Perform linear regression
-	slope, intercept, rSquared := ta.linearRegression(missRatios)
+	slope, intercept, rSquared := trendAnalyzer.linearRegression(missRatios)
 
 	// Calculate variance (stability measure)
-	variance := ta.calculateVariance(missRatios)
+	variance := trendAnalyzer.calculateVariance(missRatios)
 
 	// Determine degradation
-	degrading := slope > ta.degradationThreshold
-	unstable := variance > ta.varianceThreshold
+	degrading := slope > trendAnalyzer.degradationThreshold
+	unstable := variance > trendAnalyzer.varianceThreshold
 
 	indicatesDegradation := degrading || unstable
 
@@ -89,7 +89,7 @@ func (ta *TrendAnalyzer) AnalyzeTrend(history []*MetricsSnapshot, policyName str
 }
 
 // extractMissRatios extracts miss ratio values from history snapshots
-func (ta *TrendAnalyzer) extractMissRatios(history []*MetricsSnapshot, policyName string) []float64 {
+func (trendAnalyzer *TrendAnalyzer) extractMissRatios(history []*MetricsSnapshot, policyName string) []float64 {
 	missRatios := make([]float64, 0, len(history))
 
 	for _, snapshot := range history {
@@ -103,8 +103,8 @@ func (ta *TrendAnalyzer) extractMissRatios(history []*MetricsSnapshot, policyNam
 }
 
 // linearRegression performs simple linear regression on the data
-// Returns: slope, intercept, R² (coefficient of determination)
-func (ta *TrendAnalyzer) linearRegression(values []float64) (slope, intercept, rSquared float64) {
+// Returns: slope, intercept, R^2 (coefficient of determination)
+func (trendAnalyzer *TrendAnalyzer) linearRegression(values []float64) (slope, intercept, rSquared float64) {
 	n := float64(len(values))
 
 	if n < 2 {
@@ -127,7 +127,7 @@ func (ta *TrendAnalyzer) linearRegression(values []float64) (slope, intercept, r
 	meanY := sumY / n
 
 	// Calculate slope and intercept
-	// slope = (n×ΣXY - ΣX×ΣY) / (n×ΣX² - (ΣX)²)
+	// slope = (n×ΣXY - ΣX×ΣY) / (n×ΣX^2 - (ΣX)^2)
 	numerator := n*sumXY - sumX*sumY
 	denominator := n*sumX2 - sumX*sumX
 
@@ -138,16 +138,16 @@ func (ta *TrendAnalyzer) linearRegression(values []float64) (slope, intercept, r
 	slope = numerator / denominator
 	intercept = meanY - slope*meanX
 
-	// Calculate R² (goodness of fit)
-	rSquared = ta.calculateRSquared(values, slope, intercept)
+	// Calculate R^2 (goodness of fit)
+	rSquared = trendAnalyzer.calculateRSquared(values, slope, intercept)
 
 	return slope, intercept, rSquared
 }
 
 // calculateRSquared calculates the coefficient of determination (R²)
-// R² = 1 - (SS_res / SS_tot)
-// R² closer to 1 means better fit
-func (ta *TrendAnalyzer) calculateRSquared(values []float64, slope, intercept float64) float64 {
+// R^2 = 1 - (SS_res / SS_tot)
+// R^2 closer to 1 means better fit
+func (trendAnalyzer *TrendAnalyzer) calculateRSquared(values []float64, slope, intercept float64) float64 {
 	n := len(values)
 
 	if n == 0 {
@@ -164,6 +164,7 @@ func (ta *TrendAnalyzer) calculateRSquared(values []float64, slope, intercept fl
 	// Calculate total sum of squares (SS_tot) and residual sum of squares (SS_res)
 	var ssTot, ssRes float64
 
+	// Iterate over data points to compute SS_tot and SS_res
 	for i, y := range values {
 		x := float64(i)
 		predicted := slope*x + intercept
@@ -178,7 +179,7 @@ func (ta *TrendAnalyzer) calculateRSquared(values []float64, slope, intercept fl
 
 	rSquared := 1 - (ssRes / ssTot)
 
-	// R² can be negative if model is worse than mean
+	// R^2 can be negative if model is worse than mean
 	// Clamp to 0 for interpretability
 	if rSquared < 0 {
 		rSquared = 0
@@ -188,7 +189,7 @@ func (ta *TrendAnalyzer) calculateRSquared(values []float64, slope, intercept fl
 }
 
 // calculateVariance calculates the variance of miss ratios
-func (ta *TrendAnalyzer) calculateVariance(values []float64) float64 {
+func (trendAnalyzer *TrendAnalyzer) calculateVariance(values []float64) float64 {
 	n := len(values)
 
 	if n == 0 {
@@ -214,18 +215,18 @@ func (ta *TrendAnalyzer) calculateVariance(values []float64) float64 {
 }
 
 // PredictNextValue predicts the next miss ratio value based on trend
-func (ta *TrendAnalyzer) PredictNextValue(history []*MetricsSnapshot, policyName string) (predicted float64, confidence float64, err error) {
-	ta.mu.RLock()
-	defer ta.mu.RUnlock()
+func (trendAnalyzer *TrendAnalyzer) PredictNextValue(history []*MetricsSnapshot, policyName string) (predicted float64, confidence float64, err error) {
+	trendAnalyzer.mu.RLock()
+	defer trendAnalyzer.mu.RUnlock()
 
-	missRatios := ta.extractMissRatios(history, policyName)
+	missRatios := trendAnalyzer.extractMissRatios(history, policyName)
 
-	if len(missRatios) < ta.minSamples {
+	if len(missRatios) < trendAnalyzer.minSamples {
 		return 0, 0, fmt.Errorf("insufficient data: need at least %d samples, got %d",
-			ta.minSamples, len(missRatios))
+			trendAnalyzer.minSamples, len(missRatios))
 	}
 
-	slope, intercept, rSquared := ta.linearRegression(missRatios)
+	slope, intercept, rSquared := trendAnalyzer.linearRegression(missRatios)
 
 	// Predict next value (x = len(missRatios))
 	nextX := float64(len(missRatios))
@@ -242,34 +243,34 @@ func (ta *TrendAnalyzer) PredictNextValue(history []*MetricsSnapshot, policyName
 }
 
 // SetThresholds allows customization of analysis thresholds
-func (ta *TrendAnalyzer) SetThresholds(degradationThreshold, varianceThreshold float64, minSamples int) {
-	ta.mu.Lock()
-	defer ta.mu.Unlock()
+func (trendAnalyzer *TrendAnalyzer) SetThresholds(degradationThreshold, varianceThreshold float64, minSamples int) {
+	trendAnalyzer.mu.Lock()
+	defer trendAnalyzer.mu.Unlock()
 
 	if degradationThreshold > 0 {
-		ta.degradationThreshold = degradationThreshold
+		trendAnalyzer.degradationThreshold = degradationThreshold
 	}
 
 	if varianceThreshold > 0 {
-		ta.varianceThreshold = varianceThreshold
+		trendAnalyzer.varianceThreshold = varianceThreshold
 	}
 
 	if minSamples > 0 {
-		ta.minSamples = minSamples
+		trendAnalyzer.minSamples = minSamples
 	}
 }
 
 // GetThresholds returns current threshold values
-func (ta *TrendAnalyzer) GetThresholds() (degradation, variance float64, minSamples int) {
-	ta.mu.RLock()
-	defer ta.mu.RUnlock()
+func (trendAnalyzer *TrendAnalyzer) GetThresholds() (degradation, variance float64, minSamples int) {
+	trendAnalyzer.mu.RLock()
+	defer trendAnalyzer.mu.RUnlock()
 
-	return ta.degradationThreshold, ta.varianceThreshold, ta.minSamples
+	return trendAnalyzer.degradationThreshold, trendAnalyzer.varianceThreshold, trendAnalyzer.minSamples
 }
 
 // PrintSummary logs trend analysis summary for a policy
-func (ta *TrendAnalyzer) PrintSummary(history []*MetricsSnapshot, policyName string) {
-	trend := ta.AnalyzeTrend(history, policyName)
+func (trendAnalyzer *TrendAnalyzer) PrintSummary(history []*MetricsSnapshot, policyName string) {
+	trend := trendAnalyzer.AnalyzeTrend(history, policyName)
 
 	log.Println("TrendAnalyzer Summary")
 	log.Printf("Policy: %s", policyName)
@@ -281,14 +282,14 @@ func (ta *TrendAnalyzer) PrintSummary(history []*MetricsSnapshot, policyName str
 
 	// Interpretation
 	if trend.IndicatesDegradation {
-		if trend.Slope > ta.degradationThreshold {
-			log.Printf("Degrading trend detected (slope > %.3f)", ta.degradationThreshold)
+		if trend.Slope > trendAnalyzer.degradationThreshold {
+			log.Printf("Degrading trend detected (slope > %.3f)", trendAnalyzer.degradationThreshold)
 			log.Printf("Projected increase: %.2f%% per snapshot",
 				trend.Slope*100)
 		}
-		if trend.Variance > ta.varianceThreshold {
+		if trend.Variance > trendAnalyzer.varianceThreshold {
 			log.Printf("High variance detected (%.6f > %.3f)",
-				trend.Variance, ta.varianceThreshold)
+				trend.Variance, trendAnalyzer.varianceThreshold)
 			log.Println("Performance is unstable")
 		}
 	} else {
@@ -303,6 +304,6 @@ func (ta *TrendAnalyzer) PrintSummary(history []*MetricsSnapshot, policyName str
 }
 
 // CalculateStandardDeviation calculates standard deviation from variance
-func (ta *TrendAnalyzer) CalculateStandardDeviation(variance float64) float64 {
+func (trendAnalyzer *TrendAnalyzer) CalculateStandardDeviation(variance float64) float64 {
 	return math.Sqrt(variance)
 }
