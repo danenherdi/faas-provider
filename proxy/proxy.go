@@ -35,6 +35,7 @@ import (
 	"time"
 
 	fhttputil "github.com/danenherdi/faas-provider/httputil"
+	"github.com/danenherdi/faas-provider/pkg/adaptive"
 	"github.com/danenherdi/faas-provider/types"
 	"github.com/gorilla/mux"
 )
@@ -44,6 +45,19 @@ const (
 	defaultContentType     = "text/plain"
 	openFaaSInternalHeader = "X-OpenFaaS-Internal"
 )
+
+// Shared HTTP client across all requests to enable connection reuse
+var sharedHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        100,              // Total pool size
+		MaxIdleConnsPerHost: 100,              // Pool size per host
+		MaxConnsPerHost:     100,              // Max concurrent per host
+		IdleConnTimeout:     90 * time.Second, // Keep connections alive for 90s
+		DisableKeepAlives:   false,            // Enable keep-alives for connection reuse
+		DisableCompression:  false,            // Enable compression for better performance
+	},
+	Timeout: 30 * time.Second, // Set a timeout for requests
+}
 
 // BaseURLResolver URL resolver for proxy requests
 //
@@ -127,6 +141,47 @@ func NewFlowHandler(config types.FaaSConfig, cacheClient types.CacheClient, reso
 	// Errors are common during disconnect of client, no need to log them.
 	reverseProxy.ErrorLog = log.New(io.Discard, "", 0)
 
+	// Initialize intelligent orchestrator module
+	var orchestrator *adaptive.IntelligentOrchestrator
+
+	// Check if orchestrator can be enabled
+	if !config.EnableIntelligentOrchestrator {
+		log.Println("Intelligent orchestrator is disabled in config")
+	} else if !config.EnableCaching {
+		log.Println(" Intelligent orchestrator disabled because caching is disabled (EnableCaching=false)")
+	} else {
+		// Try to extract PaperCache client for orchestrator
+		if pcClientWrapper, ok := cacheClient.(*types.PaperCacheClientWrapper); ok {
+			log.Println("PaperCache client detected, initializing orchestrator...")
+
+			// Use default config
+			orchestratorConfig := buildOrchestratorConfig(config)
+
+			orchestrator = adaptive.NewIntelligentOrchestrator(pcClientWrapper.Client, orchestratorConfig)
+
+			log.Println("Starting initialization with fast profiling...")
+			if err := orchestrator.Initialize(); err != nil {
+				log.Printf("WARNING: Initialization failed: %v", err)
+				log.Println("Continuing without adaptive caching")
+				orchestrator = nil
+			} else {
+				log.Println("Initialization completed successfully.")
+
+				// Start background evaluation loop
+				go func() {
+					log.Println("Starting Orchestrator evaluation loop...")
+					if err := orchestrator.Start(); err != nil {
+						log.Printf("Orchestrator evaluation loop error: %v", err)
+					}
+				}()
+
+				log.Println("Orchestrator background evaluation loop started")
+			}
+		} else {
+			log.Println("PaperCache client not detected, orchestrator disabled")
+		}
+	}
+
 	// Return the handler function
 	return func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("the flow proxy handler is working properly.")
@@ -176,6 +231,13 @@ func NewFlowHandler(config types.FaaSConfig, cacheClient types.CacheClient, reso
 
 			// Try to get cached response from the cache client
 			cachedResponseBytes, err := cacheClient.Get(r.Context(), hashString)
+
+			// Record cache access in orchestrator
+			if orchestrator != nil {
+				isHit := err == nil && cachedResponseBytes != nil
+				orchestrator.RecordAccess(hashString, isHit)
+			}
+
 			if err == nil {
 				// If cached response exists, parse the JSON string and return it
 				w.WriteHeader(http.StatusOK)
@@ -221,8 +283,9 @@ func NewFlowHandler(config types.FaaSConfig, cacheClient types.CacheClient, reso
 			req.Header.Set("Content-Type", "application/json")
 
 			// Do the request
-			client := &http.Client{}
-			resp, err := client.Do(req)
+			//client := &http.Client{}
+			//resp, err := client.Do(req)
+			resp, err := sharedHTTPClient.Do(req)
 			if err != nil {
 				fmt.Printf("error in doing the request of function %s: %s\n", alias, err.Error())
 			}
@@ -233,7 +296,6 @@ func NewFlowHandler(config types.FaaSConfig, cacheClient types.CacheClient, reso
 
 			// Read the response body
 			data, err := io.ReadAll(resp.Body)
-
 			if err != nil {
 				fmt.Printf("error in reading the response of function %s: %s\n", alias, err.Error())
 			}
@@ -480,4 +542,39 @@ func getContentType(request http.Header, proxyResponse http.Header) (headerConte
 	}
 
 	return headerContentType
+}
+
+// buildOrchestratorConfig creates orchestrator config from FaaSConfig with defaults
+func buildOrchestratorConfig(faasConfig types.FaaSConfig) *adaptive.OrchestratorConfig {
+	config := &adaptive.OrchestratorConfig{}
+
+	// Evaluation Interval (convert seconds to time.Duration)
+	if faasConfig.OrchestratorEvalInterval > 0 {
+		config.EvaluationInterval = time.Duration(faasConfig.OrchestratorEvalInterval) * time.Second
+	} else {
+		config.EvaluationInterval = 10 * time.Second // Default: 10 seconds
+	}
+
+	// Stability Period (convert seconds to time.Duration)
+	if faasConfig.OrchestratorStabilityPeriod > 0 {
+		config.StabilityPeriod = time.Duration(faasConfig.OrchestratorStabilityPeriod) * time.Second
+	} else {
+		config.StabilityPeriod = 30 * time.Second // Default: 30 seconds
+	}
+
+	// Switch Threshold (already float64, no conversion)
+	if faasConfig.OrchestratorSwitchThreshold > 0 && faasConfig.OrchestratorSwitchThreshold <= 1.0 {
+		config.SwitchThreshold = faasConfig.OrchestratorSwitchThreshold
+	} else {
+		config.SwitchThreshold = 0.05 // Default: 5%
+	}
+
+	// Max Memory (convert GB to bytes)
+	if faasConfig.OrchestratorMaxMemory > 0 {
+		config.MaxMemory = faasConfig.OrchestratorMaxMemory * 1024 * 1024 * 1024
+	} else {
+		config.MaxMemory = 8 * 1024 * 1024 * 1024 // Default: 8GB
+	}
+
+	return config
 }

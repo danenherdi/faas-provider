@@ -379,7 +379,7 @@ func (client *PaperClient) processStatus(writer *sheetWriter) (*PaperStatus, err
 
 func parsePaperAddr(paper_addr string) (*string, error) {
 	if !strings.HasPrefix(paper_addr, "paper://") {
-		return nil, errors.New("Invalid paper address.");
+		return nil, errors.New("Invalid paper address.")
 	}
 
 	addr := strings.Replace(paper_addr, "paper://", "", 1)

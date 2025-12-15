@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	paperClient "github.com/PaperCache/paper-client-go"
+	paperClient "github.com/danenherdi/paper-client-go"
 	"github.com/redis/go-redis/v9"
 )
 

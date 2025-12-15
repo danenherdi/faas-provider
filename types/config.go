@@ -82,6 +82,16 @@ type FaaSConfig struct {
 	MaxIdleConnsPerHost int
 	// EnableCaching
 	EnableCaching bool
+	// EnableIntelligentOrchestrator
+	EnableIntelligentOrchestrator bool
+	// OrchestratorEvalInterval defines how often the orchestrator should evaluate function placement
+	OrchestratorEvalInterval uint64
+	// OrchestratorStabilityPeriod defines how long a function must be stable before being considered for migration
+	OrchestratorStabilityPeriod uint64
+	// OrchestratorSwitchThreshold defines the threshold for switching function placement
+	OrchestratorSwitchThreshold float64
+	// OrchestratorMaxMemory defines the maximum memory a function can use to be considered for migration
+	OrchestratorMaxMemory uint64
 }
 
 // GetReadTimeout is a helper to safely return the configured ReadTimeout or the default value of 10s
